@@ -480,6 +480,7 @@ def _bahdanau_score(processed_query, keys, normalize):
     # normed_v = g * v / ||v||
     normed_v = g * v * math_ops.rsqrt(
         math_ops.reduce_sum(math_ops.square(v)))
+    processed_query = array_ops.tile(processed_query, [1, array_ops.shape(keys)[1], 1])
     return math_ops.reduce_sum(
         normed_v * math_ops.tanh(keys + processed_query + b), [2])
   else:

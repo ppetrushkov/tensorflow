@@ -29,6 +29,22 @@ limitations under the License.
 namespace tensorflow {
 namespace graph_transforms {
 
+const std::vector<string>& GetIgnoredWeights() {
+  static const std::vector<string> ignore_names = {
+    "NMT/Embedding_Decoder"
+  };
+  return ignore_names;
+}
+
+bool isIgnored(const string& name) {
+  const std::vector<string>& ignore_names = GetIgnoredWeights();
+  for (string ignore_name : ignore_names) {
+    if (name == ignore_name)
+      return true;
+  }
+  return false;
+}
+
 // Converts any large float constants into eight-bit equivalents, with a
 // Dequantize op so that subsequent nodes can still access the results in a
 // float form.
@@ -45,6 +61,10 @@ Status QuantizeWeights(const GraphDef& input_graph_def,
                      const std::set<string>& output_nodes,
                      std::vector<NodeDef>* new_nodes) {
         const NodeDef& old_const_node = match.node;
+        if (isIgnored(old_const_node.name())) {
+          new_nodes->push_back(old_const_node);
+          return Status::OK();
+        }
         if (!old_const_node.attr().count("dtype")) {
           return errors::InvalidArgument("No 'dtype' attribute for Const node ",
                                          old_const_node.name());

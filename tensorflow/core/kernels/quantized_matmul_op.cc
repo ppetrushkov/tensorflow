@@ -25,6 +25,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/quantization_utils.h"
 #include "tensorflow/core/kernels/reference_gemm.h"
 #include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/platform/logging.h"
 
 namespace tensorflow {
 
@@ -168,6 +169,7 @@ class QuantizedMatMulOp : public OpKernel {
         }
       }
     } else {
+      LOG(INFO) << "REFERENCE QGEMM";
       ReferenceGemm<T1, T2, Toutput>(
           transpose_a_, transpose_b_, transpose_c, m, n, k, a_data, offset_a,
           lda, b_data, offset_b, ldb, c_data, shift_c, offset_c, mult_c, ldc);

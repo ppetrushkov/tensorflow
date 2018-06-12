@@ -25,6 +25,8 @@ limitations under the License.
 #include "tensorflow/core/public/session.h"
 #include "tensorflow/core/util/command_line_flags.h"
 #include "tensorflow/tools/graph_transforms/transform_utils.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/platform/logging.h"
 
 namespace tensorflow {
 namespace graph_transforms {
@@ -142,6 +144,24 @@ const std::vector<QuantizedOpInfo>& GetQuantizedOpList() {
        QuantizedOpInfo::CONTIGUOUS_MIN_MAX},
   };
   return op_list;
+}
+
+
+const std::vector<string>& GetQuantizedWeights() {
+  static const std::vector<string> weight_names = {
+    "NMT/Projection/kernel_quantized_const"
+    //"NMT/Embedding_Decoder_quantized_const"
+  };
+  return weight_names;
+}
+
+bool hasQuantizedWeight(const string& name) {
+  const std::vector<string>& weight_names = GetQuantizedWeights();
+  for (string weight_name : weight_names) {
+    if (name == weight_name)
+      return true;
+  }
+  return false;
 }
 
 namespace {
@@ -700,6 +720,17 @@ Status QuantizeNodes(const GraphDef& input_graph_def,
         const NodeDef& float_node = match.node;
         const QuantizedOpInfo& op_info = op_map[float_node.op()];
 
+        // Ignore ops in while
+        if (str_util::StartsWith(float_node.name(), "NMT_1/Encoder/bw/bw/while/")) {
+          CopyOriginalMatch(match, new_nodes);
+          return Status::OK();
+        }
+        if (str_util::StartsWith(float_node.name(), "NMT_1/Encoder/fw/fw/while/")) {
+          CopyOriginalMatch(match, new_nodes);
+          return Status::OK();
+        }
+
+
         DataTypeVector input_types;
         DataTypeVector output_types;
         TF_RETURN_IF_ERROR(
@@ -736,6 +767,19 @@ Status QuantizeNodes(const GraphDef& input_graph_def,
           }
 
           const string& input_name = float_node.input(i);
+          //LOG(INFO) << "NAME " << input_name;
+          if (str_util::EndsWith(input_name, "/read")) {
+            string input_name_short = input_name.substr(0, input_name.size()-5);
+            string quantized_weight_name = input_name_short + "_quantized_const";
+            LOG(INFO) << "NAME QUANT " << quantized_weight_name;
+            LOG(INFO) << "INPUT TYPE " << float_node.input(i);
+            //if(quantized_weight_name == "NMT/Projection/kernel_quantized_const") {
+            if(hasQuantizedWeight(quantized_weight_name)) {
+              LOG(INFO) << "MATCH QUANTIZED";
+              quantized_input_names.push_back(quantized_weight_name);
+              continue;
+            }
+          }
           string unique_input_name =
               namespace_prefix + "/" + UniqueNodeNameFromInput(input_name);
 
@@ -825,15 +869,38 @@ Status QuantizeNodes(const GraphDef& input_graph_def,
         }
         if (op_info.min_max_order == QuantizedOpInfo::CONTIGUOUS_MIN_MAX) {
           for (const string& quantized_input_name : quantized_input_names) {
-            AddNodeInput(quantized_input_name + ":1", &quantized_main_node);
-            AddNodeInput(quantized_input_name + ":2", &quantized_main_node);
+            if (str_util::EndsWith(quantized_input_name, "_quantized_const")) {
+              string input_name_short = quantized_input_name.substr(0, quantized_input_name.size()-5);
+              string quantized_min_name = input_name_short + "min";
+              string quantized_max_name = input_name_short + "max";
+              LOG(INFO) << "QUANTIZED MIN/MAX " << quantized_min_name;
+              AddNodeInput(quantized_min_name, &quantized_main_node);
+              AddNodeInput(quantized_max_name, &quantized_main_node);
+            } else {
+              AddNodeInput(quantized_input_name + ":1", &quantized_main_node);
+              AddNodeInput(quantized_input_name + ":2", &quantized_main_node);
+            }
           }
         } else {
           for (const string& quantized_input_name : quantized_input_names) {
-            AddNodeInput(quantized_input_name + ":1", &quantized_main_node);
+            if (str_util::EndsWith(quantized_input_name, "_quantized_const")) {
+              string input_name_short = quantized_input_name.substr(0, quantized_input_name.size()-5);
+              string quantized_min_name = input_name_short + "min";
+              LOG(INFO) << "QUANTIZED MIN " << quantized_min_name;
+              AddNodeInput(quantized_min_name, &quantized_main_node);
+            } else {
+              AddNodeInput(quantized_input_name + ":1", &quantized_main_node);
+            }
           }
           for (const string& quantized_input_name : quantized_input_names) {
-            AddNodeInput(quantized_input_name + ":2", &quantized_main_node);
+            if (str_util::EndsWith(quantized_input_name, "_quantized_const")) {
+              string input_name_short = quantized_input_name.substr(0, quantized_input_name.size()-5);
+              string quantized_max_name = input_name_short + "max";
+              LOG(INFO) << "QUANTIZED MAX " << quantized_max_name;
+              AddNodeInput(quantized_max_name, &quantized_main_node);
+            } else {
+              AddNodeInput(quantized_input_name + ":2", &quantized_main_node);
+            }
           }
         }
         new_nodes->push_back(quantized_main_node);
@@ -850,6 +917,7 @@ Status QuantizeNodes(const GraphDef& input_graph_def,
             fallback_min_node.set_name(quantized_main_node.name() +
                                        "/fallback_min");
             SetNodeAttr("dtype", DT_FLOAT, &fallback_min_node);
+            AddNodeInput("^" + quantized_main_node.name(), &fallback_min_node);
             Tensor fallback_min_tensor(DT_FLOAT, {});
             fallback_min_tensor.flat<float>()(0) = fallback_min;
             SetNodeTensorAttr<float>("value", fallback_min_tensor,
@@ -861,6 +929,7 @@ Status QuantizeNodes(const GraphDef& input_graph_def,
             fallback_max_node.set_name(quantized_main_node.name() +
                                        "/fallback_max");
             SetNodeAttr("dtype", DT_FLOAT, &fallback_max_node);
+            AddNodeInput("^" + quantized_main_node.name(), &fallback_max_node);
             Tensor fallback_max_tensor(DT_FLOAT, {});
             fallback_max_tensor.flat<float>()(0) = fallback_max;
             SetNodeTensorAttr<float>("value", fallback_max_tensor,
