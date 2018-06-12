@@ -466,6 +466,7 @@ def _bahdanau_score(processed_query, keys, normalize):
   num_units = keys.shape[2].value or array_ops.shape(keys)[2]
   # Reshape from [batch_size, ...] to [batch_size, 1, ...] for broadcasting.
   processed_query = array_ops.expand_dims(processed_query, 1)
+  processed_query = array_ops.tile(processed_query, [1, array_ops.shape(keys)[1], 1])
   v = variable_scope.get_variable(
       "attention_v", [num_units], dtype=dtype)
   if normalize:
