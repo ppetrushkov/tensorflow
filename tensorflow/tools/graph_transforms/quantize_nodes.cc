@@ -850,6 +850,8 @@ Status QuantizeNodes(const GraphDef& input_graph_def,
             fallback_min_node.set_name(quantized_main_node.name() +
                                        "/fallback_min");
             SetNodeAttr("dtype", DT_FLOAT, &fallback_min_node);
+            # Make depend on quantize node to preserve frame structure when using control_ops
+            AddNodeInput("^" + quantized_main_node.name(), &fallback_min_node);
             Tensor fallback_min_tensor(DT_FLOAT, {});
             fallback_min_tensor.flat<float>()(0) = fallback_min;
             SetNodeTensorAttr<float>("value", fallback_min_tensor,
@@ -861,6 +863,7 @@ Status QuantizeNodes(const GraphDef& input_graph_def,
             fallback_max_node.set_name(quantized_main_node.name() +
                                        "/fallback_max");
             SetNodeAttr("dtype", DT_FLOAT, &fallback_max_node);
+            AddNodeInput("^" + quantized_main_node.name(), &fallback_max_node);
             Tensor fallback_max_tensor(DT_FLOAT, {});
             fallback_max_tensor.flat<float>()(0) = fallback_max;
             SetNodeTensorAttr<float>("value", fallback_max_tensor,
